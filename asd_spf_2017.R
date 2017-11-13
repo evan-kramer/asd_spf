@@ -23,8 +23,16 @@ if(data == T) {
                   n_on_track = as.numeric(str_detect(performance_level, "3.") == T),
                   n_mastered = as.numeric(str_detect(performance_level, "4.") == T)) 
     
+    # Percent on track/mastered
+    school_numeric = read_excel("J:/WEBPAGES/NCLBAppeals/Accountability Web Files/985_SchoolNumericFile_12Oct2017.xlsx") %>% 
+        filter(str_detect(subject, "Math") == T | str_detect(subject, "HS") == T | str_detect(subject, "ELA") == T) %>% 
+        mutate(subgroup = ifelse(subgroup == "English Learners", "English Learners with T1/T2", subgroup))
+    
     # Success Rates
-    school_summary = read_csv("K:/ORP_accountability/projects/2017_school_accountability/school_summary_file.csv")
+    school_summary = read_csv("K:/ORP_accountability/projects/2017_school_accountability/school_summary_file.csv") %>% 
+        mutate(pool = ifelse(system == 985 & school == 8065, "HS", pool),
+               pool = ifelse(system == 985 & school == 8140, "HS", pool),
+               pool = ifelse(system == 985 & school == 35, "HS", pool))
     
     # Lexile
     map = read_excel("K:/ORP_accountability/projects/Evan/ASD 2017 SPF/16-17 ASD Lexile Goal Results.xlsx", sheet = 2) %>% 
@@ -61,16 +69,29 @@ if(data == T) {
                school = ifelse(str_detect(`School Name`, "Hillcrest") == T, 8140, school))
     
     # ACT
-    
-    
-    
-    
-    # focus = read_csv("K:/ORP_accountability/projects/2017_school_accountability/focus_exit_improving.csv")
-    # reward = read_csv("K:/ORP_accountability/projects/2017_school_accountability/reward_metrics.csv") 
-    # cohort2013 = read_csv("K:/ORP_accountability/data/2017_graduation_rate/student_level_20170830.csv")
-    # cohort2012 = read_csv("K:/ORP_accountability/data/2016_graduation_rate/student_level_20161201.csv")
-    # cohort2011 = read_dta("K:/ORP_accountability/data/2015_graduation_rate/grad_data_2014-15/2011GradCohort.dta")
-    # asd_grads = read_csv("K:/ORP_accountability/projects/Evan/ASD 2017 SPF/asd_grads.csv")
+    act = read_dta("K:/Assessment_Data Returns/ACT/2016-17/Final Combined/20170907_ACT_JuniorDayResultsCombined_SY2016-17_Whalen_v1.dta") %>% 
+        left_join(read_excel("K:/Assessment_Data Returns/ACT/2016-17/Final Combined/TN Crosswalk - Spring 2017.xlsx", 
+                             col_types = c(rep("text", 5))) %>% 
+                      filter(str_detect(`ACT Organization Code`, "D") == F & !is.na(`ACT Organization Code`)) %>%
+                      separate(`Local Site Code`, into = c("system", "school"), sep = " ") %>% 
+                      transmute(acthscode = as.numeric(`ACT Organization Code`), system = as.numeric(system), 
+                                school = as.numeric(school), school_name = `Organization Name`), 
+                  by = "acthscode") %>% 
+          mutate(system = ifelse(str_detect(school_name, "HILLCREST") == T, 985, system),
+                 school = ifelse(str_detect(school_name, "HILLCREST") == T, 8140, school)) %>% 
+          filter(system == 985 & !is.na(act_composite)) %>% 
+          group_by(system, school) %>% 
+          summarize(avg_composite = round(mean(act_composite, na.rm = T), 1)) %>% 
+          ungroup()
+
+    # Graduation
+    grad = full_join(read_csv("K:/ORP_accountability/data/2016_graduation_rate/grad_rate_base_EK.csv") %>% 
+                         filter(system == 985 & subgroup == "All Students" & school != 0) %>% 
+                         select(system, school, grad_rate2016 = grad_rate),
+                     read_csv("K:/ORP_accountability/data/2017_graduation_rate/grad_rate_base_EK.csv") %>% 
+                         filter(system == 985 & subgroup == "All Students" & school != 0) %>% 
+                         select(system, school, grad_rate2017 = grad_rate), 
+                     by = c("system", "school"))
     
     # Determine equity eligibility
     ## All
@@ -179,6 +200,9 @@ if(spf == T) {
                   category = "Mission")
     
     # School Progress
+    ## Subject-Specific TVAAS
+    ## Percentile Rank of SSR
+    ## Gains in Percentage On Track/Mastered
     
     # Student Progress
     student_progress = school_summary %>% 
@@ -222,38 +246,118 @@ if(spf == T) {
         mutate(category = "College and Career - Lexile Growth")
     
     ## ACT - mean composite, junior, HS only
-    
-    
+    act_average = mission %>% 
+        select(system, school, pool, subgroup, designation_ineligible, equity_eligible) %>% 
+        full_join(act, by = c("system", "school")) %>% 
+        mutate(pts_possible = ifelse(is.na(avg_composite), NA, 
+                                           ifelse(school %in% c(45, 50), 
+                                                  ifelse(equity_eligible == 1, 5, 10),
+                                                         ifelse(equity_eligible == 1, 10, 15))),
+               pts_earned = ifelse(avg_composite >= 16, pts_possible, 
+                                   ifelse(avg_composite >= 15, 0.8 * pts_possible, 
+                                          ifelse(avg_composite >= 14, 0.6 * pts_possible, 0.4 * pts_possible))),
+               performance = ifelse(avg_composite >= 16, "Exceeds", 
+                                    ifelse(avg_composite >= 15, "Meets", 
+                                           ifelse(avg_composite >= 14, "Approaches", "Does Not Meet")))) %>% 
+        mutate_each(funs(ifelse(designation_ineligible == 1, NA, .)), starts_with("pts"), performance) %>% 
+    mutate(category = "College and Career - ACT Composite")
+
     ## Extended Graduation Rate - HS only
+    grad_rates = mission %>% 
+        select(system, school, pool, subgroup, designation_ineligible, equity_eligible) %>% 
+        full_join(grad, by = c("system", "school")) %>% 
+        mutate(pts_possible = ifelse(is.na(grad_rate2016) | is.na(grad_rate2017), NA, 
+                                     ifelse(school %in% c(45, 50), 5,
+                                            ifelse(equity_eligible == 1, 10, 15))),
+               pts_earned = ifelse(grad_rate2017 - grad_rate2016 >= 8, pts_possible,
+                                   ifelse(grad_rate2017 - grad_rate2016 >= 7 & grad_rate2017 - grad_rate2016 < 8, 0.8 * pts_possible, 
+                                          ifelse(grad_rate2017 - grad_rate2016 >= 6 & grad_rate2017 - grad_rate2016 < 7, 0.6 * pts_possible,
+                                                 0.4 * pts_possible))),
+               performance = ifelse(grad_rate2017 - grad_rate2016 >= 8, "Exceeds",
+                                    ifelse(grad_rate2017 - grad_rate2016 >= 7 & grad_rate2017 - grad_rate2016 < 8, "Meets", 
+                                           ifelse(grad_rate2017 - grad_rate2016 >= 6 & grad_rate2017 - grad_rate2016 < 7, "Approaches",
+                                                  "Does Not Meet")))) %>% 
+        mutate_each(funs(ifelse(designation_ineligible == 1, NA, .)), starts_with("pts"), performance) %>% 
+        mutate(category = "College and Career - Graduation Rate Gains")
     
+    ## Overall College and Career
+    bind_rows(act_average, grad_rates) %>% arrange(system, school, subgroup)
+               
     # Equity
+    ## Subgroup success rate percentile rank 
+    equity_sr = filter(equity_eligible, equity_eligible == 1) %>% 
+        select(system, school, contains("eligible_")) %>% 
+        gather("subgroup", "equity_eligible", starts_with("equity")) %>% 
+        mutate(subgroup = ifelse(str_detect(subgroup, "bhn") == T, "Black/Hispanic/Native American", subgroup),
+               subgroup = ifelse(str_detect(subgroup, "ed") == T, "Economically Disadvantaged", subgroup),
+               subgroup = ifelse(str_detect(subgroup, "el") == T, "English Learners with T1/T2", subgroup),
+               subgroup = ifelse(str_detect(subgroup, "swd") == T, "Students with Disabilities", subgroup)) %>% 
+        filter(equity_eligible == 1) %>% 
+        left_join(school_summary %>% 
+                      group_by(pool, subgroup) %>% 
+                      transmute(system, school, success_rate_2017, success_rate_2017_pctile,
+                                pctile_new = round(100 * percent_rank(success_rate_2017), 1)), 
+                  by = c("system", "school", "subgroup")) %>% 
+        filter(!is.na(pctile_new)) %>% 
+        arrange(system, school, subgroup) %>% 
+        group_by(system, school) %>% 
+        mutate(pts_earned = ifelse(sum(pctile_new >= 6.5) / n() > .75, 10, 
+                                   ifelse(sum(pctile_new >= 6.5) / n() > .5 & sum(pctile_new >= 6.5) / n() <= .75, 8, 
+                                              ifelse(sum(pctile_new >= 6.5) / n() > .25 & sum(pctile_new >= 6.5) / n() <= .5, 6, 4)))) %>% 
+        ungroup()
+    
+    ## Subgroup gains in percent on track/mastered
+    equity_gains = filter(equity_eligible, equity_eligible == 1) %>% 
+        select(system, school, contains("eligible_")) %>% 
+        gather("subgroup", "equity_eligible", starts_with("equity")) %>% 
+        mutate(subgroup = str_replace(subgroup, "equity_eligible_", ""),
+               subgroup = ifelse(subgroup == "bhn", "Black/Hispanic/Native American", subgroup),
+               subgroup = ifelse(subgroup == "ed", "Economically Disadvantaged", subgroup),
+               subgroup = ifelse(subgroup == "el", "English Learners with T1/T2", subgroup),
+               subgroup = ifelse(subgroup == "swd", "Students with Disabilities", subgroup),
+               year = 2017) %>% 
+        full_join(school_numeric %>% 
+                      group_by(system, school, subgroup, year) %>% 
+                      summarize_each(funs(sum(., na.rm = T)), valid_tests, n_on_track, n_mastered) %>% 
+                      ungroup() %>% 
+                      mutate(pct_on_mastered = round(100 * (n_on_track + n_mastered) / valid_tests, 1)), 
+                  by = c("system", "school", "subgroup", "year")) %>% 
+        arrange(system, school, subgroup, desc(year)) %>% 
+        select(year, system, school, subgroup, pct_on_mastered) %>% 
+        spread(year, pct_on_mastered) %>% 
+        mutate(pts_possible = 10,
+               pts_earned = ifelse(`2017` - `2016` >= 12, pts_possible, 
+                                   ifelse(`2017` - `2016` < 12 & `2017` - `2016` >= 10, 0.8 * pts_possible, 
+                                          ifelse(`2017` - `2016` < 10 & `2017` - `2016` >= 8, 0.6 * pts_possible, 0.4 * pts_possible)))) 
+    
+    ## Equity metrics
+    equity_metrics = full_join(equity_sr, equity_gains, 
+                               by = c("system", "school", "subgroup")) %>%
+        filter(equity_eligible == 1) %>% 
+        transmute(system, school, subgroup, pool, equity_eligible, success_rate_2017, pctile_new,
+                  pct_on_mastered_2016 = `2016`, pct_on_mastered_2017 = `2017`,
+                  pts_possible, pts_earned_sr = pts_earned.x, pts_earned_gains = pts_earned.y,
+                  pts_earned_max = ifelse(is.na(pts_earned_gains), pts_earned_sr, 
+                                          ifelse(pts_earned_sr > pts_earned_gains, pts_earned_sr, pts_earned_gains)),
+                  category = "Equity") %>% 
+        arrange(system, school, subgroup) %>% 
+        group_by(system, school, subgroup) %>% 
+        summarize_each(funs(first(.)), pool:category) %>% 
+        ungroup()
+    
+    ## Overall Equity
+    equity_overall = equity_metrics %>% 
+        group_by(system, school) %>% 
+        summarize_each(funs(first(.)), pool, starts_with("pts"), category) %>% 
+        full_join(equity_eligible %>% 
+                      filter(equity_eligible == 1) %>% 
+                      select(system, school, equity_eligible), by = c("system", "school"))
+
+                  
+    # Alt Ed
+    ## Credit Attainment
+    ## Individual Learning Plans (% goals completed)
 }
 
 # K2
 ## Amy to take care of this
-
-# K8
-## Mission - one-year success rate
-# mission = school_summary %>% 
-#     filter(system == 985 & subgroup == "All Students") %>% 
-#     transmute(system, system_name, school, school_name, subgroup, pool, designation_ineligible,
-#               success_rate_2017, success_rate_2017_pctile)
-    
-## School Progress - best of two subject-specific TVAAS and percentile rank on math, ELA, science success rate 
-### Subject-specific TVAAS
-### Percentile rank on math, ELA, science success rate
-## Student Progress - TVAAS composite
-## College and Career - Lexile growth (% at grade level or 1.5 years)
-## Equity - subgroup percentile rank on math, ELA, and science SSR
-
-# HS
-## Mission - one-year success rate
-## School Progress - best of three subject-specific TVAAS and percentile rank on math, ELA, science success rate 
-### Subject-specific TVAAS
-### Percentile rank on math, ELA, science success rate
-### Gains in percent prof/adv
-## Student Progress - TVAAS composite
-## College and Career - Lexile growth (% at grade level or 1.5 years), average ACT composite (junior day, current year?), extended grad rate gains
-## Equity - subgroup percentile rank on math, ELA, and science SSR and subgroup gains in percent prof/adv
-
-# Alt Ed
