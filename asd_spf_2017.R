@@ -1,6 +1,6 @@
 # ASD SPF 2017
 # Evan Kramer
-# 11/29/2017
+# 11/30/2017
 
 library(tidyverse)
 library(lubridate)
@@ -10,6 +10,7 @@ library(readxl)
 
 data = F
 spf = T
+output = T
 
 # Load data
 if(data == T) {
@@ -274,7 +275,7 @@ if(spf == T) {
         filter(system == 985 & subgroup == "All Students") %>% 
         select(system, school, starts_with("success_rate")) %>% 
         full_join(pool_equity, by = c("system", "school")) %>% 
-        transmute(system, system_name, school, school_name, subgroup, pool, designation_ineligible, 
+        transmute(system, system_name, school, school_name, subgroup, pool, equity_eligible, designation_ineligible, 
                   success_rate_2017, success_rate_2017_pctile, target = 6.5, 
                   pts_possible = ifelse(designation_ineligible == 1, NA, ifelse(equity_eligible == 1, 20, 15)), 
                   pts_earned = ifelse(is.na(pts_possible), NA, 
@@ -419,7 +420,7 @@ if(spf == T) {
         mutate(category = "College and Career - Graduation Rate Gains")
     
     ## Overall College and Career
-    college_career_overall = bind_rows(act_average, grad_rates) %>% arrange(system, school) %>% 
+    college_career_overall = bind_rows(lexile_growth, act_average, grad_rates) %>% arrange(system, school) %>% 
         select(-subgroup)
                
     # Alt Ed
@@ -427,20 +428,27 @@ if(spf == T) {
     ## Individual Learning Plans (% goals completed)
     
     # Bind all rows together
-    spf_metrics = bind_rows(mission, progress_overall, college_career_overall, equity_overall) %>% 
+    spf_metrics = bind_rows(mission, progress_overall, student_progress, college_career_overall, equity_overall) %>% 
         arrange(system, school, category) %>% 
         select(starts_with("system"), starts_with("school"), pool, ends_with("eligible"), category, 
                pts_possible, pts_earned, performance, everything()) %>% 
         mutate(system_name = dendextend::na_locf(system_name),
                school_name = ifelse(school == 40, "Frayser 9th Grade Academy", school_name), # should drop this one? 
-               school_name = ifelse(school == 8040, "KIPP Memphis Academy Elementary", school_name))
+               school_name = ifelse(school == 8040, "KIPP Memphis Academy Elementary", school_name)) %>% 
+        arrange(system, school, category)
 
     spf_overall = spf_metrics %>% 
         group_by(system, school) %>% 
-        # filter(is.na(pts_earned) & !is.na(pts_possible)) %>%
-        # mutate(pts_possible = ifelse(is.na(pts_earned) & !is.na(pts_possible), NA, pts_possible)) %>% 
-        summarize_at(vars(pts_possible, pts_earned), funs(sum(., na.rm = T)))
+        summarize_at(vars(pts_possible, pts_earned), funs(sum(., na.rm = T))) %>% 
+        mutate(pct_earned = ifelse(pts_possible == 0, NA, round(100 * pts_earned / pts_possible, 1)),
+               overall_performance = ifelse(is.na(pct_earned), "Insufficient Data", 
+                                            ifelse(pct_earned < 50, "Does Not Meet", 
+                                                ifelse(pct_earned >= 50 & pct_earned < 70, "Approaches", 
+                                                    ifelse(pct_earned >= 70 & pct_earned < 90, "Meets", "Exceeds")))))
 }
 
-# K2
-## Amy to take care of this
+# Output files for final release
+if(output == T) {
+    write_excel_csv(spf_metrics, "K:/ORP_accountability/projects/Evan/ASD 2017 SPF/spf_metrics.csv", na = "")
+}
+
