@@ -1,6 +1,6 @@
 # ASD SPF 2017
 # Evan Kramer
-# 11/30/2017
+# 12/1/2017
 
 library(tidyverse)
 library(lubridate)
@@ -239,16 +239,22 @@ if(spf == T) {
     equity_metrics = full_join(equity_sr, equity_gains, 
                                by = c("system", "school", "subgroup")) %>%
         filter(equity_eligible == 1) %>% 
-        transmute(system, school, subgroup, pool, equity_eligible, success_rate_2017, pctile_new,
+        transmute(system, school, subgroup, pool, equity_eligible, success_rate_2017, success_rate_2017_pctile, pctile_new,
                   pct_on_mastered_2016 = `2016`, pct_on_mastered_2017 = `2017`,
                   pts_possible, pts_earned_sr = pts_earned.x, pts_earned_gains = pts_earned.y,
                   pts_earned_max = ifelse(is.na(pts_earned_gains), pts_earned_sr, 
                                           ifelse(pts_earned_sr > pts_earned_gains, pts_earned_sr, pts_earned_gains)),
+                  performance = ifelse(pts_earned_max == 10, "Exceeds",
+                                       ifelse(pts_earned_max == 8, "Meets",
+                                              ifelse(pts_earned_max == 6, "Approaches", "Does Not Meet"))),
                   category = "Equity") %>% 
         arrange(system, school, subgroup) %>% 
         group_by(system, school, subgroup) %>% 
         summarize_at(vars(pool:category), funs(first(.))) %>% 
-        ungroup()
+        ungroup() %>% 
+        group_by(system, school) %>% 
+        summarize_all(funs(first(.))) %>% 
+        select(-subgroup)
     
     ## Overall Equity
     equity_overall = equity_metrics %>% 
@@ -277,7 +283,7 @@ if(spf == T) {
         full_join(pool_equity, by = c("system", "school")) %>% 
         transmute(system, system_name, school, school_name, subgroup, pool, equity_eligible, designation_ineligible, 
                   success_rate_2017, success_rate_2017_pctile, target = 6.5, 
-                  pts_possible = ifelse(designation_ineligible == 1, NA, ifelse(equity_eligible == 1, 20, 15)), 
+                  pts_possible = ifelse(equity_eligible == 1, 20, 15), 
                   pts_earned = ifelse(is.na(pts_possible), NA, 
                                       ifelse(success_rate_2017_pctile >= target, pts_possible, pts_possible * .6)),
                   performance = ifelse(success_rate_2017_pctile >= target, "Exceeds", "Does Not Meet"),
@@ -291,12 +297,12 @@ if(spf == T) {
         transmute(system = as.numeric(`District Number`), school = as.numeric(`School Number`), 
                   lit_num_tvaas = `School-Wide: Literacy and Numeracy`) %>% 
         full_join(pool_equity, by = c("system", "school")) %>%
-        mutate(pts_possible = ifelse(designation_ineligible == 1, NA, ifelse(pool == "HS", 20, 30)),
-               pts_earned = ifelse(designation_ineligible == 1 | is.na(lit_num_tvaas), NA,
+        mutate(pts_possible = ifelse(pool == "HS", 20, 30),
+               pts_earned = ifelse(is.na(lit_num_tvaas), NA,
                                    ifelse(lit_num_tvaas == 5, pts_possible, 
                                           ifelse(lit_num_tvaas == 4, .8 * pts_possible,
                                                  ifelse(lit_num_tvaas == 3, .6 * pts_possible, .4 * pts_possible)))),
-               performance = ifelse(designation_ineligible == 1 | is.na(lit_num_tvaas), NA,
+               performance = ifelse(is.na(lit_num_tvaas), NA,
                                     ifelse(lit_num_tvaas == 5, "Exceeds", 
                                            ifelse(lit_num_tvaas == 4, "Meets",
                                                   ifelse(lit_num_tvaas == 3, "Approaches", "Does Not Meet")))), 
@@ -305,15 +311,16 @@ if(spf == T) {
     ## Percentile Rank of SSR
     progress_pctile = school_summary %>% 
         filter(system == 985 & subgroup == "All Students") %>% 
-        select(system, school, starts_with("success_rate")) %>% 
+        select(system, school, starts_with("success_rate_2017")) %>% 
         full_join(pool_equity, by = c("system", "school")) %>% 
-        mutate(pts_possible = ifelse(designation_ineligible == 1, NA, ifelse(pool == "HS", 20, 30)),
-               pts_earned = ifelse(designation_ineligible == 1 | is.na(success_rate_2017_pctile), NA,
+        mutate(pts_possible = ifelse(pool == "HS", 20, 30),
+               pts_earned = ifelse(is.na(success_rate_2017_pctile), NA,
                                    ifelse(success_rate_2017_pctile >= 10, pts_possible, 
                                           ifelse(success_rate_2017_pctile >= 5 & success_rate_2017_pctile < 10, .8 * pts_possible, .4 * pts_possible))),
                performance = ifelse(success_rate_2017_pctile >= 10, "Exceeds", 
                                     ifelse(success_rate_2017_pctile >= 5 & success_rate_2017_pctile < 10, "Meets", "Does Not Meet")),
-               category = "School Progress")
+               category = "School Progress") %>% 
+        select(-subgroup)
         
     ## Gains in Percentage On Track/Mastered
     progress_gains = school_numeric %>% 
@@ -327,7 +334,7 @@ if(spf == T) {
         select(year, system, school, pool, ends_with("eligible"), pct_on_mastered) %>% 
         spread(year, pct_on_mastered) %>% 
         mutate(pct_on_mastered_gain = `2017` - `2016`,
-               pts_possible = ifelse(designation_ineligible == 1 | is.na(pct_on_mastered_gain), NA, 20),
+               pts_possible = ifelse(is.na(pct_on_mastered_gain), NA, 20),
                   pts_earned = ifelse(pct_on_mastered_gain >= 12, pts_possible, 
                                       ifelse(pct_on_mastered_gain >= 10 & pct_on_mastered_gain < 12, .8 * pts_possible, 
                                              ifelse(pct_on_mastered_gain >= 8 & pct_on_mastered_gain < 10, .6 * pts_possible, .4 * pts_possible))),
@@ -340,10 +347,12 @@ if(spf == T) {
     progress_overall = bind_rows(progress_tvaas, progress_pctile, progress_gains) %>% 
         arrange(system, school, desc(pts_earned)) %>% 
         group_by(system, school) %>% 
-        summarize_at(vars(pool:category), funs(first(.))) %>% 
-        mutate(performance = ifelse(is.na(pts_earned), NA, performance)) %>% 
-        left_join(select(pool_equity, starts_with("system"), starts_with("school")),
-                  by = c("system", "school"))
+        summarize_at(vars(lit_num_tvaas:category, pct_on_mastered_gain), funs(first(.))) %>% 
+        mutate(performance = ifelse(is.na(pts_earned), NA, performance)) %>%
+        select(-subgroup, -pct_on_mastered_gain, -lit_num_tvaas) %>% 
+        full_join(select(progress_tvaas, system, school, lit_num_tvaas), by = c("system", "school")) %>% 
+        full_join(select(progress_pctile, system, school, success_rate_2017_pctile), by = c("system", "school")) %>% 
+        full_join(select(progress_gains, system, school, pct_on_mastered_gain), by = c("system", "school"))
     
     # Student Progress
     student_progress = school_summary %>% 
@@ -428,14 +437,19 @@ if(spf == T) {
     ## Individual Learning Plans (% goals completed)
     
     # Bind all rows together
-    spf_metrics = bind_rows(mission, progress_overall, student_progress, college_career_overall, equity_overall) %>% 
+    spf_metrics = bind_rows(mission, progress_overall, student_progress, college_career_overall, equity_metrics) %>% 
         arrange(system, school, category) %>% 
         select(starts_with("system"), starts_with("school"), pool, ends_with("eligible"), category, 
                pts_possible, pts_earned, performance, everything()) %>% 
-        mutate(system_name = dendextend::na_locf(system_name),
+        mutate(pool = ifelse(school %in% c(45, 50), "ALT", 
+                             ifelse(school %in% c(40, 8040), "K8", pool)),
+               system_name = dendextend::na_locf(system_name),
                school_name = ifelse(school == 40, "Frayser 9th Grade Academy", school_name), # should drop this one? 
-               school_name = ifelse(school == 8040, "KIPP Memphis Academy Elementary", school_name)) %>% 
-        arrange(system, school, category)
+               school_name = ifelse(school == 8040, "KIPP Memphis Academy Elementary", school_name),
+               designation_ineligible = 0) %>% 
+        mutate_at(vars(school_name, contains("eligible")), funs(dendextend::na_locf(.))) %>% 
+        arrange(system, school, category) %>% 
+        select(-subgroup)
 
     spf_overall = spf_metrics %>% 
         group_by(system, school) %>% 
@@ -450,5 +464,10 @@ if(spf == T) {
 # Output files for final release
 if(output == T) {
     write_excel_csv(spf_metrics, "K:/ORP_accountability/projects/Evan/ASD 2017 SPF/spf_metrics.csv", na = "")
+    d = spf_metrics %>% 
+        group_by(system, system_name, school, school_name) %>% 
+        summarize(pool = first(pool)) %>% 
+        ungroup()
+    xlsx::write.xlsx(d, "K:/ORP_accountability/projects/Evan/ASD 2017 SPF/School List.xlsx")
 }
 
