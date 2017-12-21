@@ -1,6 +1,6 @@
 # ASD SPF 2017
 # Evan Kramer
-# 12/1/2017
+# 12/21/2017
 
 library(tidyverse)
 library(lubridate)
@@ -9,8 +9,9 @@ library(stringr)
 library(readxl)
 
 data = F
-spf = T
-output = T
+spf = F
+output = F
+summary = T
 
 # Load data
 if(data == T) {
@@ -471,3 +472,36 @@ if(output == T) {
     xlsx::write.xlsx(d, "K:/ORP_accountability/projects/Evan/ASD 2017 SPF/School List.xlsx")
 }
 
+# Summary results
+if(summary == T) {
+    setwd("K:/ORP_accountability/projects/Evan/ASD 2017 SPF/Output")
+    a = as.tbl(data.frame()) 
+    for(f in seq_along(list.files())) {
+        if(f < 10) {
+            schl = as.numeric(str_replace_all(str_sub(list.files()[f], 9, 10), "_", ""))
+        } else {
+            schl = as.numeric(str_replace_all(str_sub(list.files()[f], 9, 12), "_", ""))
+        }
+        temp = read_excel(list.files()[f])
+        perf = temp[nrow(temp), ncol(temp)]
+        df = data.frame(system = 985, school = schl, performance = perf)
+        a = bind_rows(a, df) %>% 
+            arrange(system, school)
+        print(f)
+    }
+    
+    b = a %>% 
+        bind_rows(data.frame(system = c(985, 985), school = c(8110, 8095), X__6 = c("Approaches", "Meets"))) %>% 
+        left_join(read_excel("K:/ORP_accountability/data/2017_final_accountability_files/school_name_crosswalk.xlsx"), 
+                  by = c("system", "school")) %>% 
+        transmute(system, system_name = str_to_title(dendextend::na_locf(system_name)), 
+                  school, school_name, spf_result = X__6) %>% 
+        mutate(school_name = ifelse(school == 40, "Frayser 9th Grade Academy", school_name),
+               school_name = ifelse(school == 8035, "Klondike Preparatory Academy", school_name),
+               school_name = ifelse(school == 8080, "KIPP Memphis University Middle", school_name)) %>% 
+        arrange(system, school)
+        
+        
+    write_csv(b, "K:/ORP_accountability/projects/Evan/ASD 2017 SPF/spf_overall.csv", na = "")
+    rm(a, b, f, temp, perf, df)
+}
